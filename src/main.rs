@@ -32,7 +32,6 @@ fn read_data_dummy() -> Result<SensorData, ReadingError> {
     let mut rng = rand::thread_rng();
     let temperature: f32 = 50f32 - rng.gen::<f32>() * 100f32;
     let humidity: f32 = rng.gen::<f32>() * 100f32;
-    println!("Failed to fetch sensor data, making it up: {temperature} C / {humidity} %");
     Ok(SensorData::new(sensor, temperature, humidity))
 }
 
@@ -54,7 +53,7 @@ pub fn main() {
 
     thread::spawn(move || {
         // TODO: make configurable!
-        let addr: SocketAddr = ([127, 0, 0, 1], 8080).into();
+        let addr: SocketAddr = ([0, 0, 0, 0], 8080).into();
         println!("Listening on http://{}", addr);
         let tcp_listener: TcpListener = TcpListener::bind(&addr).expect("Failed to bind");
         loop {
