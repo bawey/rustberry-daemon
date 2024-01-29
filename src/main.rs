@@ -10,6 +10,32 @@ use dht22_pi::ReadingError;
 
 use rand::Rng;
 use serde::Serialize;
+use serde::Deserialize;
+
+use confy;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    dummy_sensor: bool,
+    dht22_pin: u8,
+    sensor_query_interval_secs: u64,
+    listen_on_loopback_only: bool,
+    listen_on_port: u16,
+    max_readings_kept: u32,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            dummy_sensor: false,
+            dht22_pin: 26,
+            sensor_query_interval_secs: 60,
+            listen_on_loopback_only: false,
+            listen_on_port: 8080,
+            max_readings_kept: u32::MAX,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 struct SensorData {
@@ -27,7 +53,7 @@ impl SensorData {
 }
 
 // TODO: change the method signature to use more general error type
-fn read_data_dummy() -> Result<SensorData, ReadingError> {
+fn read_data_dummy(_config: &Config) -> Result<SensorData, ReadingError> {
     let sensor = "dummy";
     let mut rng = rand::thread_rng();
     let temperature: f32 = 50f32 - rng.gen::<f32>() * 100f32;
@@ -35,9 +61,8 @@ fn read_data_dummy() -> Result<SensorData, ReadingError> {
     Ok(SensorData::new(sensor, temperature, humidity))
 }
 
-fn read_data_dht22() -> Result<SensorData, ReadingError> {
-    // TODO: make the pin number configurable
-    let result = dht22_pi::read(26);
+fn read_data_dht22(config: &Config) -> Result<SensorData, ReadingError> {
+    let result = dht22_pi::read(config.dht22_pin);
     return match result {
         Ok(reading) => Ok(SensorData::new("dht22", reading.temperature, reading.humidity)),
         Err(error) => Err(error)
@@ -45,15 +70,22 @@ fn read_data_dht22() -> Result<SensorData, ReadingError> {
 }
 
 pub fn main() {
+    const APP_NAME: &str = "rustberry-daemon";
+    const CONFIG_NAME: &str = "default";
+
+    let config_file_path = confy::get_configuration_file_path(APP_NAME, CONFIG_NAME).unwrap();
+    println!("Using {} as config file path", &config_file_path.as_path().as_os_str().to_str().unwrap());
+    let config: Config = confy::load_path(&config_file_path).unwrap();
+
     // the data to be shared between consumer(s) and producer
     let state = Arc::new(Mutex::new(vec![]));
-
     let consumer_data = Arc::clone(&state);
     let producer_data = Arc::clone(&state);
 
     thread::spawn(move || {
-        // TODO: make configurable!
-        let addr: SocketAddr = ([0, 0, 0, 0], 8080).into();
+        let addr: SocketAddr =
+            (if config.listen_on_loopback_only { [127, 0, 0, 1] } else { [0, 0, 0, 0] },
+             *(&config.listen_on_port.clone())).into();
         println!("Listening on http://{}", addr);
         let tcp_listener: TcpListener = TcpListener::bind(&addr).expect("Failed to bind");
         loop {
@@ -66,25 +98,31 @@ pub fn main() {
             };
             let serialized = serde_json::to_string(&data_points).unwrap();
             let content_length = serialized.len();
-            let response = format!("HTTP/1.1 200 OK\r\nContent-Length: {content_length}\r\n\r\n{serialized}");
+            let headers = format!("Content-Type: application/json; charset=utf-8\r\nContent-Length: {content_length}\r\n");
+            let response = format!("HTTP/1.1 200 OK\r\n{headers}\r\n{serialized}");
             let _ = stream.write_all(response.as_bytes());
         }
     });
 
+
     loop {
-        // TODO: make the list configurable
-        for func in [read_data_dht22, read_data_dummy] {
-            match (func)() {
+        let mut providers: Vec<fn(&Config) -> Result<SensorData, ReadingError>> = vec![];
+        if config.dht22_pin != 0 { providers.push(read_data_dht22) }
+        if config.dummy_sensor { providers.push(read_data_dummy) }
+
+        for func in providers {
+            match (func)(&config) {
                 Ok(reading) => {
                     let mut store = producer_data.lock().unwrap();
-                    // TODO: use a fixed-size of buffer (configurable)
+                    if store.len() as u32 == (&config).max_readings_kept {
+                        store.remove(0);
+                    }
                     store.push(reading);
                 }
                 Err(error) => println!("Failed to read sensor: {:?}", error)
             }
         }
-        //TODO: make the interval configurable
-        sleep(Duration::from_secs(15));
+        sleep(Duration::from_secs((&config).sensor_query_interval_secs));
     }
 }
 
