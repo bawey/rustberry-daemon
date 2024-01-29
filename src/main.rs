@@ -7,15 +7,18 @@ use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
-use confy;
 use dht22_pi::ReadingError;
 use rand::Rng;
+use rppal::gpio::{Gpio, Mode};
+use rppal::hal::Delay;
+use rppal_dht11::Dht11;
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
     dummy_sensor: bool,
+    dht11_pin: u8,
     dht22_pin: u8,
     sensor_query_interval_secs: u64,
     listen_on_loopback_only: bool,
@@ -27,6 +30,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             dummy_sensor: false,
+            dht11_pin: 0,
             dht22_pin: 26,
             sensor_query_interval_secs: 60,
             listen_on_loopback_only: false,
@@ -60,12 +64,24 @@ fn read_data_dummy(_config: &Config) -> Result<SensorData, ReadingError> {
     Ok(SensorData::new(sensor, temperature, humidity))
 }
 
+fn read_data_dht11(config: &Config) -> Result<SensorData, ReadingError> {
+    let pin = Gpio::new()?.get(config.dht11_pin)?.into_output_low();
+    let pin = Gpio::new()?.get(config.dht11_pin)?.into_io(Mode::Input);
+    // Create an instance of the DHT11 device
+    let mut dht11 = Dht11::new(pin);
+    let mut delay = Delay::new();
+    // Perform a sensor reading
+    let measurement = dht11.perform_measurement(&mut delay).unwrap();
+    println!("{:?}", measurement);
+    Ok(SensorData::new("dht11", measurement.temperature as f32, measurement.humidity as f32))
+}
+
 fn read_data_dht22(config: &Config) -> Result<SensorData, ReadingError> {
     let result = dht22_pi::read(config.dht22_pin);
-    return match result {
+    match result {
         Ok(reading) => Ok(SensorData::new("dht22", reading.temperature, reading.humidity)),
         Err(error) => Err(error)
-    };
+    }
 }
 
 pub fn main() {
@@ -109,6 +125,7 @@ pub fn main() {
         let mut providers: Vec<fn(&Config) -> Result<SensorData, ReadingError>> = vec![];
         if config.dht22_pin != 0 { providers.push(read_data_dht22) }
         if config.dummy_sensor { providers.push(read_data_dummy) }
+        if config.dht11_pin != 0 { providers.push(read_data_dht11) }
 
         for func in providers {
             match (func)(&config) {

@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+rppal = { version = "0.13.1", features = ["embedded-hal"] }
 dht22_pi = "1.0.0"
+rppal-dht11 = "0.4.0"
 rand = "0.8.5"
 serde_json = "1.0.112"
 serde = { version = "1.0.196", features = ["derive"] }
