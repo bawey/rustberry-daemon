@@ -1,18 +1,17 @@
 extern crate dht22_pi;
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener};
-use std::sync::{Mutex, Arc};
+use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
-use dht22_pi::ReadingError;
-
-use rand::Rng;
-use serde::Serialize;
-use serde::Deserialize;
 
 use confy;
+use dht22_pi::ReadingError;
+use rand::Rng;
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Config {
@@ -21,7 +20,7 @@ struct Config {
     sensor_query_interval_secs: u64,
     listen_on_loopback_only: bool,
     listen_on_port: u16,
-    max_readings_kept: u32,
+    max_readings_kept: usize,
 }
 
 impl Default for Config {
@@ -32,7 +31,7 @@ impl Default for Config {
             sensor_query_interval_secs: 60,
             listen_on_loopback_only: false,
             listen_on_port: 8080,
-            max_readings_kept: u32::MAX,
+            max_readings_kept: usize::MAX,
         }
     }
 }
@@ -83,11 +82,12 @@ pub fn main() {
     let producer_data = Arc::clone(&state);
 
     thread::spawn(move || {
-        let addr: SocketAddr =
-            (if config.listen_on_loopback_only { [127, 0, 0, 1] } else { [0, 0, 0, 0] },
-             *(&config.listen_on_port.clone())).into();
-        println!("Listening on http://{}", addr);
-        let tcp_listener: TcpListener = TcpListener::bind(&addr).expect("Failed to bind");
+        let address = format!("{}:{}",
+                              if config.listen_on_loopback_only { "127.0.0.1" } else { "0.0.0.0" },
+                              &config.listen_on_port
+        );
+        println!("Listening on http://{}", address);
+        let tcp_listener: TcpListener = TcpListener::bind(address).expect("Failed to bind");
         loop {
             let (mut stream, _) = tcp_listener.accept().expect("Failed to accept");
             let mut buffer = [0; 1024];
@@ -114,7 +114,7 @@ pub fn main() {
             match (func)(&config) {
                 Ok(reading) => {
                     let mut store = producer_data.lock().unwrap();
-                    if store.len() as u32 == (&config).max_readings_kept {
+                    if store.len() == config.max_readings_kept {
                         store.remove(0);
                     }
                     store.push(reading);
