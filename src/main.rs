@@ -65,15 +65,17 @@ fn read_data_dummy(_config: &Config) -> Result<SensorData, ReadingError> {
 }
 
 fn read_data_dht11(config: &Config) -> Result<SensorData, ReadingError> {
-    let pin = Gpio::new()?.get(config.dht11_pin)?.into_output_low();
     let pin = Gpio::new()?.get(config.dht11_pin)?.into_io(Mode::Input);
-    // Create an instance of the DHT11 device
     let mut dht11 = Dht11::new(pin);
     let mut delay = Delay::new();
-    // Perform a sensor reading
-    let measurement = dht11.perform_measurement(&mut delay).unwrap();
-    println!("{:?}", measurement);
-    Ok(SensorData::new("dht11", measurement.temperature as f32, measurement.humidity as f32))
+    match dht11.perform_measurement(&mut delay){
+        Ok(measurement) =>
+            Ok(SensorData::new("dht11",
+                               measurement.temperature as f32 / 10f32,
+                               measurement.humidity as f32 / 10f32)),
+        // TODO: clean under the rug
+        Err(_) => Err(ReadingError::Checksum)
+    }
 }
 
 fn read_data_dht22(config: &Config) -> Result<SensorData, ReadingError> {
